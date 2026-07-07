@@ -4,5 +4,5 @@ public enum Estado {
     PRONTO,
     EXECUTANDO,
     BLOQUEADO,
-    CONCLUÍDO
+    CONCLUIDO   // sem acento para evitar problemas de encoding no console Windows
 }
