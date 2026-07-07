@@ -1,230 +1,129 @@
 package org.example.Simulador;
 
+import org.example.escalonador.*;
 import org.example.model.*;
-
-import java.util.ArrayList;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Queue;
 
 public class Simulador {
 
-    private final Queue<Processo> filaDeEntrada = new LinkedList<>();
-    private final List<Processo> memoriaRAM = new ArrayList<>();
-    private final List<Processo> disco = new ArrayList<>();
-
     private static final int QUANTUM = 3;
-    private static final int TAMANHO_MEMORIA = 4;
-    private static final int PAUSA_NIVEL_MS = 600; // pausa entre niveis
+    private static final int TAMANHO_MEMORIA = 2; // RAM menor para forçar swapping e facilitar didática
+    private static final int PAUSA_NIVEL_MS = 250; // pausa entre níveis menor para fluidez
+
+    private final FilaDeEntrada filaDeEntrada = new FilaDeEntrada();
+    private final MemoriaRAM memoriaRAM = new MemoriaRAM(TAMANHO_MEMORIA);
+    private final ArmazenamentoSwap armazenamentoSwap = new ArmazenamentoSwap();
+    private final FilaDeProntos filaDeProntos = new FilaDeProntos();
+    private final Processador processador = new Processador();
+
+    private final EscalonadorAdmissao escalonadorAdmissao = new EscalonadorAdmissao();
+    private final EscalonadorMemoria escalonadorMemoria = new EscalonadorMemoria();
+    private final EscalonadorCPU escalonadorCPU = new EscalonadorCPU(QUANTUM);
 
     private int tempo = 0;
 
-    // =========================================================
-    // NIVEL 1 - ESCALONADOR DE ADMISSAO
-    // Fila de Entrada -> Memoria Principal
-    // Algoritmo: Mix de Carga (equilibra CPU-bound / E/S-bound)
-    // =========================================================
-    private void escalonadorDeAdmissao() {
-        println("[N1 - ADMISSAO]");
+    // Cores ANSI para didática no console
+    private static final String RESET = "\u001B[0m";
+    private static final String NEGRITO = "\u001B[1m";
+    private static final String VERMELHO = "\u001B[31m";
+    private static final String VERDE = "\u001B[32m";
+    private static final String AMARELO = "\u001B[33m";
+    private static final String AZUL = "\u001B[34m";
+    private static final String ROXO = "\u001B[35m";
+    private static final String CIANO = "\u001B[36m";
 
-        if (filaDeEntrada.isEmpty()) {
-            println("    Fila de entrada vazia.");
-            return;
-        }
-        if (memoriaRAM.size() >= TAMANHO_MEMORIA) {
-            println("    RAM cheia (" + memoriaRAM.size() + "/" + TAMANHO_MEMORIA
-                    + ") - admissao suspensa.");
-            return;
-        }
-
-        int cpuNaRam = contarTipo(memoriaRAM, TipoCarga.LIMITADO_CPU);
-        int esNaRam = memoriaRAM.size() - cpuNaRam;
-        TipoCarga tipoIdeal = (cpuNaRam <= esNaRam) ? TipoCarga.LIMITADO_CPU : TipoCarga.LIMITADO_ES;
-
-        Processo escolhido = null;
-        for (Processo p : filaDeEntrada) {
-            if (p.getTipo() == tipoIdeal) {
-                escolhido = p;
-                break;
-            }
-        }
-        boolean fallback = false;
-        if (escolhido == null) {
-            escolhido = filaDeEntrada.peek();
-            fallback = true;
-        }
-
-        filaDeEntrada.remove(escolhido);
-        escolhido.setTempoInativoRAM(0);
-        memoriaRAM.add(escolhido);
-
-        String motivo = fallback
-                ? "(fallback FIFO - tipo ideal indisponivel)"
-                : "(mix " + cpuNaRam + "CPU/" + esNaRam + "ES -> precisava " + tipoLabel(tipoIdeal) + ")";
-        println("    " + escolhido + " -> RAM  " + motivo);
-    }
-
-    // =========================================================
-    // NIVEL 2 - ESCALONADOR DA MEMORIA (Swap)
-    // Memoria <-> Disco
-    // Swap-OUT: processo mais inativo (criterio 2 do livro)
-    // Swap-IN : mais velho no disco + Mix de Carga (criterio 1)
-    // =========================================================
-    private void escalonadorDaMemoria() {
-        println("[N2 - MEMORIA / SWAP]");
-
-        for (Processo p : disco)
-            p.envelhecerDisco(1);
-
-        // --- Swap-OUT ---
-        if (memoriaRAM.size() > TAMANHO_MEMORIA) {
-            Processo out = null;
-            for (Processo p : memoriaRAM)
-                if (out == null || p.getTempoInativoRAM() > out.getTempoInativoRAM())
-                    out = p;
-            if (out != null) {
-                int inatividade = out.getTempoInativoRAM();
-                memoriaRAM.remove(out);
-                out.setTempoInativoRAM(0);
-                disco.add(out);
-                println("    Swap-OUT: " + out + " -> disco  (inativo ha " + inatividade + " ciclos)");
-            }
-        } else {
-            println("    RAM " + memoriaRAM.size() + "/" + TAMANHO_MEMORIA
-                    + " - sem Swap-OUT necessario.");
-        }
-
-        // --- Swap-IN ---
-        if (!disco.isEmpty() && memoriaRAM.size() < TAMANHO_MEMORIA) {
-            int cpuNaRam = contarTipo(memoriaRAM, TipoCarga.LIMITADO_CPU);
-            int esNaRam = memoriaRAM.size() - cpuNaRam;
-            TipoCarga tipoIdeal = (cpuNaRam <= esNaRam) ? TipoCarga.LIMITADO_CPU : TipoCarga.LIMITADO_ES;
-
-            Processo in = null;
-            for (Processo p : disco)
-                if (p.getTipo() == tipoIdeal)
-                    if (in == null || p.getTempoNoDisco() > in.getTempoNoDisco())
-                        in = p;
-            if (in == null)
-                for (Processo p : disco)
-                    if (in == null || p.getTempoNoDisco() > in.getTempoNoDisco())
-                        in = p;
-
-            int tempoDisco = in.getTempoNoDisco();
-            disco.remove(in);
-            in.setTempoNoDisco(0);
-            memoriaRAM.add(in);
-            println("    Swap-IN : " + in + " <- disco  (no disco ha " + tempoDisco
-                    + " ciclos, ideal=" + tipoLabel(tipoIdeal) + ")");
-        } else if (disco.isEmpty()) {
-            println("    Disco vazio - sem Swap-IN.");
-        } else {
-            println("    RAM cheia - sem Swap-IN neste ciclo.");
-        }
-    }
-
-    // =========================================================
-    // NIVEL 3 - ESCALONADOR DA CPU (Round-Robin)
-    // Seleciona o proximo processo pronto e executa 1 Quantum.
-    // =========================================================
-    private void escalonadorDaCpu() {
-        println("[N3 - CPU  Round-Robin  Q=" + QUANTUM + "]");
-
-        if (memoriaRAM.isEmpty()) {
-            println("    CPU ociosa.");
-            return;
-        }
-
-        Processo proc = memoriaRAM.remove(0);
-
-        for (Processo p : memoriaRAM) {
-            p.envelhecerMemoria(QUANTUM);
-            p.incrementarInativoRAM();
-        }
-
-        if (proc.getEstado() == Estado.BLOQUEADO) {
-            memoriaRAM.add(proc);
-            println("    " + proc + " BLOQUEADO (E/S pendente) -> fim da fila.");
-            return;
-        }
-
-        int antes = proc.getTempoExecutado();
-        proc.executar(QUANTUM);
-        proc.setTempoNaMemoria(0);
-        proc.setTempoInativoRAM(0);
-
-        if (proc.isConcluido()) {
-            proc.setEstado(Estado.CONCLUIDO);
-            println("    Executando " + proc + " ... CONCLUIDO! Removido do sistema.");
-        } else {
-            memoriaRAM.add(proc);
-            println("    Executando " + proc + " ... restam " + proc.getTempoRestante()
-                    + " unidades. Volta ao fim da fila.");
-        }
-    }
-
-    // =========================================================
     // LOOP PRINCIPAL
-    // =========================================================
     public void executarCiclo() throws InterruptedException {
         tempo++;
-        imprimirCabecalhoCiclo();
 
         Thread.sleep(PAUSA_NIVEL_MS);
-        escalonadorDeAdmissao();
+        String logAdmissao = escalonadorAdmissao.admitir(filaDeEntrada, memoriaRAM, filaDeProntos);
 
         Thread.sleep(PAUSA_NIVEL_MS);
-        escalonadorDaMemoria();
+        String logSwap = escalonadorMemoria.gerenciarSwap(memoriaRAM, armazenamentoSwap, filaDeProntos, filaDeEntrada);
 
         Thread.sleep(PAUSA_NIVEL_MS);
-        escalonadorDaCpu();
+        String logCPU = escalonadorCPU.escalonar(filaDeProntos, memoriaRAM, processador);
 
         Thread.sleep(PAUSA_NIVEL_MS);
-        imprimirSnapshot();
+        imprimirRelatorio(logAdmissao, logSwap, logCPU);
     }
 
-    public void adicionarJob(Processo processo) {
-        filaDeEntrada.offer(processo);
-        System.out.println("  + " + processo + " adicionado a fila de entrada.");
+    public void adicionarJob(Tarefa tarefa) {
+        filaDeEntrada.adicionar(tarefa);
+        System.out.println("  + " + tarefa + " adicionada a fila de entrada.");
     }
 
     public boolean isFinalizado() {
-        return filaDeEntrada.isEmpty() && disco.isEmpty() && memoriaRAM.isEmpty();
+        return filaDeEntrada.isEmpty() && armazenamentoSwap.isEmpty() && memoriaRAM.isEmpty();
     }
 
-    // =========================================================
-    // VISUALIZACAO
-    // =========================================================
-    private void imprimirCabecalhoCiclo() {
-        String linha = "=".repeat(56);
+    // VISUALIZACAO DIDATICA COLORIDA
+    private void imprimirRelatorio(String admissao, String swap, String cpu) {
+        String divLarga = "==========================================================";
+        String divCurta = "----------------------------------------------------------";
+
+        System.out.println(NEGRITO + CIANO + divLarga + RESET);
+        System.out.printf(NEGRITO + CIANO + "  CICLO %02d%n" + RESET, tempo);
+        System.out.println(NEGRITO + CIANO + divCurta + RESET);
+        
+        System.out.println("  " + NEGRITO + "N1 - ADMISSAO : " + RESET + colorirAdmissao(admissao));
+        System.out.println("  " + NEGRITO + "N2 - MEMORIA  : " + RESET + colorirSwap(swap));
+        System.out.println("  " + NEGRITO + "N3 - CPU      : " + RESET + colorirCPU(cpu));
+        
+        System.out.println(NEGRITO + CIANO + divCurta + RESET);
+        System.out.println(NEGRITO + "  ESTADO DAS ESTRUTURAS:" + RESET);
+        System.out.println("  " + NEGRITO + CIANO + "Fila Entrada : " + RESET + CIANO + listarTarefas(filaDeEntrada.getFila()) + RESET);
+        System.out.println("  " + NEGRITO + ROXO + "Disco Swap   : " + RESET + ROXO + listarDisco() + RESET);
+        System.out.println("  " + NEGRITO + AZUL + "Memoria RAM  : " + RESET + AZUL + listarRAM() + RESET);
+        System.out.println(NEGRITO + CIANO + divLarga + RESET);
         System.out.println();
-        System.out.println(linha);
-        System.out.printf("  CICLO %-3d%n", tempo);
-        System.out.println(linha);
     }
 
-    private void imprimirSnapshot() {
-        System.out.println();
-        System.out.println("  +-----------------+--------------------------------------+");
-        System.out.printf("  | Fila de Entrada | %-38s|%n", listar(filaDeEntrada));
-        System.out.printf("  | Disco (swap)    | %-38s|%n", listarDisco());
-        System.out.printf("  | RAM             | %-38s|%n", listarRAM());
-        System.out.println("  +-----------------+--------------------------------------+");
+    private String colorirAdmissao(String msg) {
+        if (msg.contains("Admitido")) {
+            return VERDE + msg + RESET;
+        } else if (msg.contains("Suspensa")) {
+            return VERMELHO + msg + RESET;
+        } else {
+            return AZUL + msg + RESET;
+        }
     }
 
-    private String listar(Iterable<Processo> lista) {
+    private String colorirSwap(String msg) {
+        if (msg.contains("Swap-OUT") || msg.contains("Swap-IN")) {
+            return ROXO + msg + RESET;
+        } else {
+            return AZUL + msg + RESET;
+        }
+    }
+
+    private String colorirCPU(String msg) {
+        if (msg.contains("Concluido")) {
+            return NEGRITO + VERDE + msg + RESET;
+        } else if (msg.contains("Executando")) {
+            return VERDE + msg + RESET;
+        } else if (msg.contains("Bloqueado")) {
+            return VERMELHO + msg + RESET;
+        } else {
+            return AMARELO + msg + RESET;
+        }
+    }
+
+    private String listarTarefas(Iterable<Tarefa> lista) {
         StringBuilder sb = new StringBuilder();
-        for (Processo p : lista)
-            sb.append(p).append("  ");
+        for (Tarefa t : lista) {
+            String tTipo = (t.getTipo() == TipoCarga.LIMITADO_CPU) ? "CPU" : "E/S";
+            sb.append(String.format("P%d[%s](0/%d)", t.getId(), tTipo, t.getTempoTotalNecessario())).append("  ");
+        }
         String s = sb.toString().trim();
         return s.isEmpty() ? "(vazia)" : s;
     }
 
     private String listarDisco() {
-        if (disco.isEmpty())
+        if (armazenamentoSwap.isEmpty())
             return "(vazio)";
         StringBuilder sb = new StringBuilder();
-        for (Processo p : disco)
+        for (Processo p : armazenamentoSwap.getProcessos())
             sb.append(p).append("[d:").append(p.getTempoNoDisco()).append("]  ");
         return sb.toString().trim();
     }
@@ -233,24 +132,8 @@ public class Simulador {
         if (memoriaRAM.isEmpty())
             return "(vazia)";
         StringBuilder sb = new StringBuilder();
-        for (Processo p : memoriaRAM)
+        for (Processo p : memoriaRAM.getProcessos())
             sb.append(p).append("[i:").append(p.getTempoInativoRAM()).append("]  ");
         return sb.toString().trim();
-    }
-
-    private void println(String msg) {
-        System.out.println(msg);
-    }
-
-    private int contarTipo(List<Processo> lista, TipoCarga tipo) {
-        int count = 0;
-        for (Processo p : lista)
-            if (p.getTipo() == tipo)
-                count++;
-        return count;
-    }
-
-    private String tipoLabel(TipoCarga t) {
-        return t == TipoCarga.LIMITADO_CPU ? "CPU" : "E/S";
     }
 }

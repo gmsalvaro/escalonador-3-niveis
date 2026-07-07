@@ -17,6 +17,14 @@ public class Processo {
         this.estado = Estado.PRONTO;
     }
 
+    public Processo(Tarefa tarefa) {
+        this.id = tarefa.getId();
+        this.tipo = tarefa.getTipo();
+        this.tempoTotalNecessario = tarefa.getTempoTotalNecessario();
+        this.estado = Estado.PRONTO;
+    }
+
+
     /** Envelhece o processo enquanto está no disco (aging anti-starvation). */
     public void envelhecerDisco(int delta) {
         tempoNoDisco += delta;
