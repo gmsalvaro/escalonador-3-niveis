@@ -122,20 +122,35 @@ escalonador-3-niveis/
 
 ### Ciclo de Vida de um Processo
 
-```
-[Fila de Entrada]  ──► EscalonadorAdmissao (N1)
-                              │
-                              ▼
-                    [RAM / Fila de Prontos]
-                       ▲              │
-   EscalonadorMemoria  │  Swap-IN     │  Swap-OUT  ──► [Disco Swap]
-           (N2)        └──────────────┘
-                              │
-                              ▼
-                    EscalonadorCPU (N3)
-                              │
-                              ▼
-                         [Concluído]
+```mermaid
+graph LR
+    subgraph Entrada ["Jobs Externos"]
+        FE["Fila de Entrada<br/>Tarefas aguardando admissão"]
+    end
+
+    subgraph RAM ["Memória Principal (RAM)"]
+        MP["Fila de Prontos<br/>Processos carregados e ativos"]
+    end
+
+    subgraph DiscoSwap ["Disco de Swap (Nível 2)"]
+        DS["Armazenamento de Swap<br/>Processos suspensos temporariamente"]
+    end
+
+    subgraph CPU ["Processador (Nível 3)"]
+        Exec["Processador (CPU)<br/>Processo ativo em execução"]
+    end
+
+    %% Nível 1 - Admissão
+    FE -->|"[Nível 1] Escalonador de Admissão<br/>(Decide o Mix de Carga e cria o Processo)"| MP
+
+    %% Nível 2 - Swap
+    MP -->|"[Nível 2] Escalonador de Memória<br/>Swap-OUT (RAM cheia / Inatividade)"| DS
+    DS -->|"[Nível 2] Escalonador de Memória<br/>Swap-IN (Espaço livre / Envelhecimento)"| MP
+
+    %% Nível 3 - CPU
+    MP -->|"[Nível 3] Escalonador de CPU<br/>Round-Robin (quantum expirado ou bloqueio)"| Exec
+    Exec -->|"(Quantum expirado ou preempção)<br/>(Bloqueado por entrada/saída)"| MP
+    Exec -->|"(Execução finalizada)"| Term(["Fim do Processo"])
 ```
 
 ---
